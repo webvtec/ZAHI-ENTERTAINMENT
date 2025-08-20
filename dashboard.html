@@ -815,51 +815,6 @@ function loadReservations() {
   });
 }
 
-
-    function clearReservations() {
-  const confirmInput = document.getElementById('clearInput').value.trim();
-  if (confirmInput !== 'CONFIRM') { 
-    alert('TYPE "CONFIRM" TO CLEAR PAST RESERVATIONS.'); 
-    return; 
-  }
-
-  // Normalize today (strip hours/mins)
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  db.collection('reservations').get().then(snapshot => {
-    const batch = db.batch();
-
-    snapshot.forEach(doc => {
-      const booking = doc.data();
-      let bookingEnd = null;
-
-      // Parse rentalDates the same way as loadReservations()
-      if (booking.rentalDates?.includes(' to ')) {
-        const end = booking.rentalDates.split(' to ')[1];
-        const [year, month, day] = end.split('-').map(Number);
-        bookingEnd = new Date(year, month - 1, day);
-      } else if (booking.rentalDates) {
-        const [year, month, day] = booking.rentalDates.split('-').map(Number);
-        bookingEnd = new Date(year, month - 1, day);
-      }
-
-      if (bookingEnd) {
-        bookingEnd.setHours(0, 0, 0, 0); // normalize
-        if (bookingEnd < today) {
-          batch.delete(doc.ref);
-        }
-      }
-    });
-
-    return batch.commit();
-  }).then(() => {
-    alert('Past reservations cleared successfully.');
-    document.getElementById('clearInput').value = '';
-  });
-}
-
-
     function searchReservations() {
   const query = document.getElementById("reservationSearch").value.toLowerCase();
   const reservationsContainer = document.getElementById("reservationsList");
@@ -881,7 +836,6 @@ function loadReservations() {
   }
 }
 
-
 function clearReservations() {
   const confirmInput = document.getElementById('clearInput').value.trim();
   if (confirmInput !== 'CONFIRM') { 
@@ -890,7 +844,7 @@ function clearReservations() {
   }
 
   const today = new Date();
-  today.setHours(0, 0, 0, 0); // normalize to start of today
+  today.setHours(0, 0, 0, 0); // normalize
 
   db.collection('reservations').get().then(snapshot => {
     const batch = db.batch();
@@ -901,13 +855,15 @@ function clearReservations() {
 
       if (booking.rentalDates?.includes(' to ')) {
         const end = booking.rentalDates.split(' to ')[1];
-        bookingEnd = new Date(end);
+        const [year, month, day] = end.split('-').map(Number);
+        bookingEnd = new Date(year, month - 1, day);
       } else if (booking.rentalDates) {
-        bookingEnd = new Date(booking.rentalDates);
+        const [year, month, day] = booking.rentalDates.split('-').map(Number);
+        bookingEnd = new Date(year, month - 1, day);
       }
 
       if (bookingEnd) {
-        bookingEnd.setHours(0, 0, 0, 0); // normalize
+        bookingEnd.setHours(0, 0, 0, 0);
         if (bookingEnd < today) {
           batch.delete(doc.ref);
         }
