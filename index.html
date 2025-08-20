@@ -571,11 +571,12 @@ async function isDateUnavailable(selectedDate, startTime, endTime) {
   return blocked;
 }
 
+
 async function completeBooking() {
   if (bookingInProgress) return; 
   bookingInProgress = true;
 
-  const bookBtn = document.getElementById("completeBookingBtn");
+  const bookBtn = document.getElementById("placeOrderBtn");
   if (bookBtn) bookBtn.disabled = true; 
 
   try {
@@ -590,44 +591,19 @@ async function completeBooking() {
 
     const cart = JSON.parse(localStorage.getItem("cart")) || [];
 
-    // ✅ required fields check (unchanged)
-    const requiredFields = {
-      customerName: name,
-      customerPhone: phone,
-      customerLocation: location,
-      rentalDateRange: rentalDates,
-      startTime: startTime,
-      endTime: endTime,
-      selectedParish: parish
-    };
-
+    // --- required field validation ---
+    const requiredFields = { name, phone, location, rentalDates, startTime, endTime, parish };
     let allValid = true;
-    Object.keys(requiredFields).forEach(id => {
-      if (id === "selectedParish") {
-        if (!requiredFields[id]) {
-          document.querySelectorAll(".parishBtn").forEach(b => b.classList.add("error"));
-          allValid = false;
-        } else {
-          document.querySelectorAll(".parishBtn").forEach(b => b.classList.remove("error"));
-        }
-      } else {
-        const el = document.getElementById(id);
-        if (!requiredFields[id]) {
-          el?.classList.add("error");
-          allValid = false;
-        } else {
-          el?.classList.remove("error");
-        }
-      }
-    });
-
+    if (!name || !phone || !location || !rentalDates || !startTime || !endTime || !parish) {
+      allValid = false;
+    }
     if (!allValid || cart.length === 0) {
       bookingInProgress = false;
       if (bookBtn) bookBtn.disabled = false;
       return;
     }
 
-    // 📅 rental dates check (unchanged)
+    // --- rental date check ---
     if (!rentalDates.includes(" to ")) {
       document.getElementById("rentalDateRange")?.classList.add("error");
       bookingInProgress = false;
@@ -644,7 +620,7 @@ async function completeBooking() {
       return;
     }
 
-    // 🔒 NEW: check unavailable days
+    // --- check unavailable days ---
     if (await isDateUnavailable(start, startTime, endTime) || await isDateUnavailable(end, startTime, endTime)) {
       alert("The selected date or time is unavailable. Please choose another.");
       bookingInProgress = false;
@@ -652,7 +628,7 @@ async function completeBooking() {
       return;
     }
 
-    // --- calculate total (unchanged) ---
+    // --- calculate total ---
     const days = getRentalDayCount();
     let totalAmount = 0;
     for (const item of cart) {
@@ -662,27 +638,78 @@ async function completeBooking() {
     }
     totalAmount = Number(totalAmount.toFixed(2));
 
-    // --- generate order number (unchanged) ---
+    // --- generate order number ---
     const orderNumber = await generateUniqueOrderNumber(name);
 
-    // --- save transaction (unchanged) ---
-    await db.runTransaction(async (transaction) => {
-      const docRef = db.collection("reservations").doc(orderNumber);
-      transaction.set(docRef, {
-        orderNumber,
-        userId: currentUser ? currentUser.uid : null,
-        name, phone, location,
-        rentalDates, startTime, endTime,
-        parish,
-        paymentType,
-        cartItems: cart,
-        totalAmount,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-      });
+    // --- save to Firestore ---
+    await db.collection("reservations").doc(orderNumber).set({
+      orderNumber,
+      userId: currentUser ? currentUser.uid : null,
+      name, phone, location,
+      rentalDates, startTime, endTime,
+      parish,
+      paymentType,
+      cartItems: cart,
+      totalAmount,
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
 
-  } catch (error) {
-    console.error("Booking error:", error);
+    // --- send Telegram ---
+    await sendTelegramMessage(
+      name, phone, location, rentalDates,
+      startTime, endTime, paymentType,
+      cart, totalAmount, orderNumber, parish
+    );
+
+    // --- cleanup ---
+    localStorage.removeItem("cart");
+    updateCartCount();
+    document.getElementById("cartModal").style.display = "none";
+    ["customerName","customerPhone","customerLocation","rentalDateRange","startTime","endTime","selectedParish"]
+      .forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
+    document.querySelectorAll(".parishBtn").forEach(b => b.classList.remove("selected"));
+
+    const stockErrorMsg = document.getElementById("stockErrorMsg");
+    if (stockErrorMsg) stockErrorMsg.innerHTML = "";
+
+    // --- success popup ---
+    Swal.fire({
+      title: `ORDER MADE<br>ORDER # (${orderNumber})`,
+      html: `
+        <hr style="margin:5px 0;">
+        <p><strong>50%</strong> of your grand total must be transferred to the account provided below within 24 hours or your order will be canceled.</p>
+        <p><strong>DELIVERY FEE WILL BE CHARGED UPON ARRIVAL</strong></p>
+        <hr style="margin:5px 0;">
+        <p>💰 50% Due Now: 
+          <span style="color:#6A0DAD; font-weight:bold; font-size:18px;">
+            ${formatJMD(totalAmount / 2)}
+          </span>
+        </p>
+        <hr style="margin:5px 0;">
+        <p><strong>Banking Details:</strong></p>
+        <p style="text-align:left; line-height:1.5; font-size:15px;">
+          🏦 Bank: <b>Your Bank Name</b><br>
+          👤 Account Name: <b>Your Account Name</b><br>
+          🔢 Account Number: <b>123456789</b><br>
+          🏛️ Branch: <b>Your Branch Name</b><br>
+          📋 Reference: <b>${orderNumber}</b>
+        </p>
+        <hr style="margin:5px 0;">
+        <p style="font-size:14px;">
+          ℹ️ If you need to see the banking information again, it’s always visible 
+          in the <b>PAYMENT INFO</b> section from the menu.
+        </p>
+      `,
+      icon: "success",
+      confirmButtonColor: "#1a73e8"
+    });
+
+    fetchBookedDatesAndInitCalendar();
+    const rentalDatesNow = (document.getElementById("rentalDateRange")?.value || "").trim();
+    if (rentalDatesNow) validateCartStock(rentalDatesNow);
+
+  } catch (err) {
+    console.error("Booking error:", err);
     alert("Failed to complete booking. Please try again.");
   } finally {
     bookingInProgress = false;
@@ -690,74 +717,6 @@ async function completeBooking() {
   }
 }
 
-
-    // --- send Telegram ---
-    await sendTelegramMessage(
-      name, phone, location, rentalDates,
-      startTime, endTime, paymentType,
-      cart, totalAmount, orderNumber, parish // ✅ include parish if needed
-    );
-
-    // --- cleanup ---
-    localStorage.removeItem("cart");
-    updateCartCount();
-    document.getElementById("cartModal").style.display = "none";
-
-    ["customerName","customerPhone","customerLocation","rentalDateRange","startTime","endTime","selectedParish"]
-      .forEach(id => { const el = document.getElementById(id); if (el) el.value = ""; });
-
-    document.querySelectorAll(".parishBtn").forEach(b => b.classList.remove("selected"));
-
-    const stockErrorMsg = document.getElementById("stockErrorMsg");
-    if (stockErrorMsg) stockErrorMsg.innerHTML = "";
-
-    // ✅ keep success popup with 50% deposit + bank info
-Swal.fire({
-  title: `ORDER MADE<br>ORDER # (${orderNumber})`,
-  html: `
-  <hr style="margin:5px 0;">
-    <p><strong>50%</strong> of your grand total must be transferred to the account provided below within 24 hours or your order will be canceled.</p>
-    <p><strong>DELIVERY FEE WILL BE CHARGED UPON ARRIVAL</strong></p>
-    <hr style="margin:5px 0;">
-    <p>💰 50% Due Now: 
-      <span style="color:#6A0DAD; font-weight:bold; font-size:18px;">
-        ${formatJMD(totalAmount / 2)}
-      </span>
-    </p>
-
-    <hr style="margin:5px 0;">
-
-    <p><strong>Banking Details:</strong></p>
-    <p style="text-align:left; line-height:1.5; font-size:15px;">
-      🏦 Bank: <b>Your Bank Name</b><br>
-      👤 Account Name: <b>Your Account Name</b><br>
-      🔢 Account Number: <b>123456789</b><br>
-      🏛️ Branch: <b>Your Branch Name</b>
-      📋 Reference: <b>${orderNumber}</b>
-    </p>
-
-    <hr style="margin:5px 0;">
-
-    <p style="font-size:14px;">
-      ℹ️ If you need to see the banking information again, it’s always visible 
-      in the <b>PAYMENT INFO</b> section from the menu.
-    </p>
-  `,
-  icon: "success",
-  confirmButtonColor: "#1a73e8"
-});
-
-    fetchBookedDatesAndInitCalendar();
-    const rentalDatesNow = (document.getElementById("rentalDateRange")?.value || "").trim();
-    if (rentalDatesNow) validateCartStock(rentalDatesNow);
-
-  } catch (err) {
-    console.error("completeBooking crashed:", err);
-  } finally {
-    bookingInProgress = false;
-    if (bookBtn) bookBtn.disabled = false;
-  }
-}
 
 
   // ✅ Remove red highlight as soon as user types or changes value
