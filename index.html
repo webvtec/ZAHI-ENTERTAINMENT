@@ -1883,5 +1883,33 @@ document.querySelectorAll(".parishBtn").forEach(btn => {
   });
 });
 
+async function isDateUnavailable(selectedDate, startTime, endTime) {
+  const dateStr = selectedDate.toISOString().split("T")[0]; // normalize YYYY-MM-DD
+
+  const snapshot = await db.collection("unavailableDays")
+    .where("date", "==", dateStr)
+    .get();
+
+  if (snapshot.empty) return false; // not blocked
+
+  let blocked = false;
+  snapshot.forEach(doc => {
+    const d = doc.data();
+    if (d.allDay) {
+      blocked = true; // whole day unavailable
+    } else {
+      // check for overlap with the blocked time window
+      if (
+        (startTime >= d.startTime && startTime < d.endTime) ||
+        (endTime > d.startTime && endTime <= d.endTime) ||
+        (startTime <= d.startTime && endTime >= d.endTime)
+      ) {
+        blocked = true;
+      }
+    }
+  });
+
+  return blocked;
+}
 
   </script>
