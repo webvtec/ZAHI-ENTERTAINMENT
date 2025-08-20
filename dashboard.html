@@ -630,16 +630,17 @@ function saveNewProduct(docId) {
   }
 
   db.collection("gallery").add({
-    name: name,
-    description: description,
-    price: price,
+    name,
+    description,
+    price,
     imageUrl: url,
-    category: category,
+    category,
     timestamp: firebase.firestore.FieldValue.serverTimestamp()
   })
   .then(() => {
     console.log("New product saved successfully");
-    document.getElementById(docId).remove(); // remove temp slot after save
+    // ❌ no need to manually remove temp slot
+    // Firestore snapshot will re-render gallery with new product
   })
   .catch(error => {
     console.error("Error saving new product: ", error);
